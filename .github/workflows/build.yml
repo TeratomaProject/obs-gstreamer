@@ -17,6 +17,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-tools-git
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-gstreamer
@@ -56,9 +57,12 @@ jobs:
           fi
           echo "Successfully found obs.dll at: $OBS_DLL"
           
-          # Give it both names to guarantee the MinGW linker finds it
+          # Convert the MSVC DLL into a MinGW-compatible Import Library (.dll.a)
           cp "$OBS_DLL" fake-prefix/lib/obs.dll
-          cp "$OBS_DLL" fake-prefix/lib/libobs.dll
+          cd fake-prefix/lib
+          gendef obs.dll
+          dlltool -d obs.def -D obs.dll -l libobs.dll.a
+          cd ../..
           
           # 4. Generate the pkg-config manifest
           cat <<EOF > fake-prefix/lib/pkgconfig/libobs.pc
