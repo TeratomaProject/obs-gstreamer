@@ -31,8 +31,9 @@ jobs:
           # 1. Get OBS source code to extract the C-headers
           git clone --depth 1 https://github.com/obsproject/obs-studio.git
           
-          # 2. Get the official OBS Windows zip to extract 'obs.dll' for linking
-          LATEST_URL=$(curl -s https://api.github.com/repos/obsproject/obs-studio/releases/latest | grep -i "browser_download_url.*\.zip" | grep -i "windows" | head -n 1 | cut -d '"' -f 4)
+          # 2. Grab the actual binary zip (filtering out 'pdb' debug files)
+          LATEST_URL=$(curl -s https://api.github.com/repos/obsproject/obs-studio/releases/latest | grep -i "browser_download_url.*\.zip" | grep -i "windows" | grep -iv "pdb" | grep -iv "debug" | head -n 1 | cut -d '"' -f 4)
+          echo "Downloading OBS binary from: $LATEST_URL"
           curl -sL "$LATEST_URL" -o obs.zip
           unzip -q obs.zip -d obs-binary
           
@@ -40,17 +41,26 @@ jobs:
           mkdir -p fake-prefix/include/obs
           cp -r obs-studio/libobs/* fake-prefix/include/obs/
           
-          # Manually create obsconfig.h to bypass needing to compile OBS itself
+          # Manually create obsconfig.h
           cat <<EOF > fake-prefix/include/obs/obsconfig.h
           #pragma once
           #define OBS_VERSION "32.2.1"
           EOF
           
-          # Grab the actual obs.dll and rename it to libobs.dll for the MinGW linker
+          # Grab the actual obs.dll with a safety check
           mkdir -p fake-prefix/lib/pkgconfig
-          find obs-binary -name "obs.dll" -exec cp {} fake-prefix/lib/libobs.dll \;
+          OBS_DLL=$(find obs-binary -name "obs.dll" | head -n 1)
+          if [ -z "$OBS_DLL" ]; then
+            echo "ERROR: obs.dll not found in the downloaded zip!"
+            exit 1
+          fi
+          echo "Successfully found obs.dll at: $OBS_DLL"
           
-          # 4. Generate the pkg-config manifest so Meson can find everything
+          # Give it both names to guarantee the MinGW linker finds it
+          cp "$OBS_DLL" fake-prefix/lib/obs.dll
+          cp "$OBS_DLL" fake-prefix/lib/libobs.dll
+          
+          # 4. Generate the pkg-config manifest
           cat <<EOF > fake-prefix/lib/pkgconfig/libobs.pc
           prefix=$(pwd)/fake-prefix
           libdir=\${prefix}/lib
@@ -69,7 +79,7 @@ jobs:
           # Tell Meson where our forged pkg-config manifest is
           export PKG_CONFIG_PATH="$(pwd)/fake-prefix/lib/pkgconfig"
           
-          # Setup and build (if it fails, print the crash log)
+          # Setup and build
           meson setup --buildtype release build || (cat build/meson-logs/meson-log.txt && exit 1)
           ninja -C build
 
