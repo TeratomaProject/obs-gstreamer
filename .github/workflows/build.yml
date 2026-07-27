@@ -26,7 +26,8 @@ jobs:
       - name: Compile Plugin
         shell: msys2 {0}
         run: |
-          meson setup --buildtype release build
+          # Try to setup meson, if it fails, print the log so we can see why
+          meson setup --buildtype release build || (cat build/meson-logs/meson-log.txt && exit 1)
           ninja -C build
 
       - name: Upload Artifact
