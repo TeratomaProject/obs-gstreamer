@@ -17,11 +17,13 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-gstreamer
             mingw-w64-x86_64-gst-plugins-base
+            git
+            curl
+            unzip
 
       - name: Prepare OBS Environment
         shell: msys2 {0}
@@ -30,24 +32,25 @@ jobs:
           git clone --depth 1 https://github.com/obsproject/obs-studio.git
           
           # 2. Get the official OBS Windows zip to extract 'obs.dll' for linking
-          # We use the GitHub API to automatically find the latest Windows .zip release
           LATEST_URL=$(curl -s https://api.github.com/repos/obsproject/obs-studio/releases/latest | grep -i "browser_download_url.*\.zip" | grep -i "windows" | head -n 1 | cut -d '"' -f 4)
           curl -sL "$LATEST_URL" -o obs.zip
           unzip -q obs.zip -d obs-binary
           
-          # 3. Create a fake installation directory so the compiler thinks OBS is natively installed
+          # 3. Create a fake installation directory for our compiler
           mkdir -p fake-prefix/include/obs
           cp -r obs-studio/libobs/* fake-prefix/include/obs/
           
-          # Run a quick CMake config to generate the dynamic obsconfig.h header
-          cmake -S obs-studio -B obs-build
-          find obs-build -name "obsconfig.h" -exec cp {} fake-prefix/include/obs/ \;
+          # Manually create obsconfig.h to bypass needing to compile OBS itself
+          cat <<EOF > fake-prefix/include/obs/obsconfig.h
+          #pragma once
+          #define OBS_VERSION "32.2.1"
+          EOF
           
-          # Grab the actual obs.dll and put it in our fake library folder
+          # Grab the actual obs.dll and rename it to libobs.dll for the MinGW linker
           mkdir -p fake-prefix/lib/pkgconfig
-          find obs-binary -name "obs.dll" -exec cp {} fake-prefix/lib/ \;
+          find obs-binary -name "obs.dll" -exec cp {} fake-prefix/lib/libobs.dll \;
           
-          # 4. Generate the pkg-config manifest so Meson can find it flawlessly
+          # 4. Generate the pkg-config manifest so Meson can find everything
           cat <<EOF > fake-prefix/lib/pkgconfig/libobs.pc
           prefix=$(pwd)/fake-prefix
           libdir=\${prefix}/lib
