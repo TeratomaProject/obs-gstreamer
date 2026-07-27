@@ -17,16 +17,56 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-gstreamer
             mingw-w64-x86_64-gst-plugins-base
-            mingw-w64-x86_64-obs-studio
+
+      - name: Prepare OBS Environment
+        shell: msys2 {0}
+        run: |
+          # 1. Get OBS source code to extract the C-headers
+          git clone --depth 1 https://github.com/obsproject/obs-studio.git
+          
+          # 2. Get the official OBS Windows zip to extract 'obs.dll' for linking
+          # We use the GitHub API to automatically find the latest Windows .zip release
+          LATEST_URL=$(curl -s https://api.github.com/repos/obsproject/obs-studio/releases/latest | grep -i "browser_download_url.*\.zip" | grep -i "windows" | head -n 1 | cut -d '"' -f 4)
+          curl -sL "$LATEST_URL" -o obs.zip
+          unzip -q obs.zip -d obs-binary
+          
+          # 3. Create a fake installation directory so the compiler thinks OBS is natively installed
+          mkdir -p fake-prefix/include/obs
+          cp -r obs-studio/libobs/* fake-prefix/include/obs/
+          
+          # Run a quick CMake config to generate the dynamic obsconfig.h header
+          cmake -S obs-studio -B obs-build
+          find obs-build -name "obsconfig.h" -exec cp {} fake-prefix/include/obs/ \;
+          
+          # Grab the actual obs.dll and put it in our fake library folder
+          mkdir -p fake-prefix/lib/pkgconfig
+          find obs-binary -name "obs.dll" -exec cp {} fake-prefix/lib/ \;
+          
+          # 4. Generate the pkg-config manifest so Meson can find it flawlessly
+          cat <<EOF > fake-prefix/lib/pkgconfig/libobs.pc
+          prefix=$(pwd)/fake-prefix
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+          
+          Name: libobs
+          Description: OBS Studio Library
+          Version: 32.2.1
+          Libs: -L\${libdir} -lobs
+          Cflags: -I\${includedir}
+          EOF
 
       - name: Compile Plugin
         shell: msys2 {0}
         run: |
-          # Try to setup meson, if it fails, print the log so we can see why
+          # Tell Meson where our forged pkg-config manifest is
+          export PKG_CONFIG_PATH="$(pwd)/fake-prefix/lib/pkgconfig"
+          
+          # Setup and build (if it fails, print the crash log)
           meson setup --buildtype release build || (cat build/meson-logs/meson-log.txt && exit 1)
           ninja -C build
 
